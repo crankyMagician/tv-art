@@ -1,0 +1,32 @@
+{
+  "count": 14,
+  "feeds": {
+    "downstairs": {
+      "name": "Downstairs: landscapes",
+      "queries": [
+        {"q": "Landscapes", "tags": true, "departmentId": 11},
+        {"q": "Landscapes", "tags": true, "departmentId": 1},
+        {"q": "Seascapes", "tags": true, "departmentId": 11},
+        {"q": "Seascapes", "tags": true, "departmentId": 1}
+      ],
+      "requireTags": ["Landscapes", "Seascapes"]
+    },
+    "upstairs": {
+      "name": "Upstairs: Impressionists",
+      "queries": [
+        {"q": "Monet", "departmentId": 11},
+        {"q": "Renoir", "departmentId": 11},
+        {"q": "Degas", "departmentId": 11},
+        {"q": "Pissarro", "departmentId": 11},
+        {"q": "Sisley", "departmentId": 11},
+        {"q": "Morisot", "departmentId": 11},
+        {"q": "Caillebotte", "departmentId": 11},
+        {"q": "Cassatt", "departmentId": 1},
+        {"q": "Van Gogh", "departmentId": 11},
+        {"q": "Cezanne", "departmentId": 11},
+        {"q": "Seurat", "departmentId": 11}
+      ],
+      "artists": ["Monet", "Renoir", "Degas", "Pissarro", "Sisley", "Morisot", "Caillebotte", "Cassatt", "van Gogh", "Cézanne", "Seurat"]
+    }
+  }
+}

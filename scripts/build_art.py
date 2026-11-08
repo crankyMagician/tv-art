@@ -31,6 +31,11 @@ W, H = 1920, 1080
 # Room around the painting so it reads as a framed print.
 MAX_W, MAX_H = 1560, 880
 CAPTION_SIZE = 22
+# Pillow's built-in font has no accented letters, so prefer a system font.
+FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # GitHub's Ubuntu runners
+    "/System/Library/Fonts/Supplemental/Arial.ttf",  # macOS
+]
 
 
 def get(url, binary=False, tries=3):
@@ -112,6 +117,13 @@ def caption(obj):
     return ", ".join(p for p in parts if p)
 
 
+def caption_font():
+    for path in FONT_PATHS:
+        if Path(path).exists():
+            return ImageFont.truetype(path, CAPTION_SIZE)
+    return ImageFont.load_default(size=CAPTION_SIZE)
+
+
 def render(obj):
     art = Image.open(io.BytesIO(get(obj["primaryImage"], binary=True)))
     art = ImageOps.exif_transpose(art).convert("RGB")
@@ -129,7 +141,7 @@ def render(obj):
 
     text = caption(obj)
     if text:
-        font = ImageFont.load_default(size=CAPTION_SIZE)
+        font = caption_font()
         draw = ImageDraw.Draw(canvas)
         tw = draw.textlength(text, font=font)
         draw.text((W - tw - 40, H - CAPTION_SIZE - 28), text, font=font, fill=(205, 205, 205))

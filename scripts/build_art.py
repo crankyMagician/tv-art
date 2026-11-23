@@ -8,6 +8,10 @@ LtvLauncher's BoxFit.cover shows the whole painting, and writes:
   site/index.json
   site/<feed>/feed.json
   site/<feed>/NN.jpg
+
+A feed with a "frame" in themes.json is drawn for a picture frame instead of
+a TV: the painting on plain black, no larger than the frame's size, with the
+caption centered underneath.
 """
 
 import argparse
@@ -117,16 +121,59 @@ def caption(obj):
     return ", ".join(p for p in parts if p)
 
 
-def caption_font():
+def caption_font(size=CAPTION_SIZE):
     for path in FONT_PATHS:
         if Path(path).exists():
-            return ImageFont.truetype(path, CAPTION_SIZE)
-    return ImageFont.load_default(size=CAPTION_SIZE)
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size=size)
 
 
-def render(obj):
+def fit_text(draw, text, font, max_width):
+    """Shortens text with an ellipsis until it fits the width."""
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+    while text and draw.textlength(text + "…", font=font) > max_width:
+        text = text[:-1]
+    return text.rstrip(" ,") + "…"
+
+
+def load_art(obj):
     art = Image.open(io.BytesIO(get(obj["primaryImage"], binary=True)))
-    art = ImageOps.exif_transpose(art).convert("RGB")
+    return ImageOps.exif_transpose(art).convert("RGB")
+
+
+def render_framed(obj, frame):
+    """Draws the painting for a picture frame: black around it, caption below.
+
+    Black shows as nothing on a mirror or an OLED panel, so the painting
+    appears to hang on its own.
+    """
+    width, height = frame["width"], frame["height"]
+    size = frame.get("captionSize", 34)
+    strip = size * 2
+    art = load_art(obj)
+    art.thumbnail((width, height - strip), Image.LANCZOS)
+
+    # The picture is only as tall as the painting needs, so a wide painting
+    # does not carry empty bands above and below it.
+    canvas = Image.new("RGB", (width, art.height + strip), (0, 0, 0))
+    top = 0
+    canvas.paste(art, ((width - art.width) // 2, top))
+
+    text = caption(obj)
+    if text:
+        font = caption_font(size)
+        draw = ImageDraw.Draw(canvas)
+        text = fit_text(draw, text, font, width - 2 * size)
+        tw = draw.textlength(text, font=font)
+        draw.text(((width - tw) // 2, top + art.height + size // 2), text, font=font, fill=(205, 205, 205))
+    return canvas
+
+
+def render(obj, frame=None):
+    if frame:
+        return render_framed(obj, frame)
+    art = load_art(obj)
     art.thumbnail((MAX_W, MAX_H), Image.LANCZOS)
 
     # Mat color: the painting's average, pulled toward black so the
@@ -153,11 +200,10 @@ def main():
     ap.add_argument("--themes", default="themes.json")
     ap.add_argument("--out", default="site")
     ap.add_argument("--base-url", default="https://crankymagician.github.io/tv-art")
-    ap.add_argument("--count", type=int, help="override themes.json count (for local tests)")
+    ap.add_argument("--count", type=int, help="override every feed's count (for local tests)")
     args = ap.parse_args()
 
     themes = json.loads(Path(args.themes).read_text())
-    count = args.count or themes["count"]
     year, week, _ = datetime.date.today().isocalendar()
     updated = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     out = Path(args.out)
@@ -168,10 +214,12 @@ def main():
         folder = out / key
         folder.mkdir(parents=True, exist_ok=True)
         images = []
+        # A feed may ask for its own number of paintings.
+        count = args.count or feed.get("count") or themes["count"]
         for obj in pick(feed, count, rng):
             name = f"{len(images) + 1:02d}.jpg"
             try:
-                render(obj).save(folder / name, "JPEG", quality=88, optimize=True, progressive=True)
+                render(obj, feed.get("frame")).save(folder / name, "JPEG", quality=88, optimize=True, progressive=True)
             except Exception as e:
                 print(f"render failed {obj.get('objectID')}: {e}", file=sys.stderr)
                 continue

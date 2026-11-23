@@ -32,6 +32,7 @@
       "name": "Mirror: a mix of paintings",
       "count": 40,
       "frame": {"width": 1000, "height": 1000, "captionSize": 34},
+      "searchPages": 3,
       "queries": [
         {"q": "painting", "departmentId": 11},
         {"q": "painting", "departmentId": 1},

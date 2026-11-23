@@ -17,7 +17,7 @@ A third feed fills a picture frame on our household mirror: https://crankymagici
 
 ## Changing what shows up
 
-Edit `themes.json`. A feed can set its own `count`. Each feed has a list of Met search queries, and `departmentId` narrows a query to one department (11 is European Paintings, 1 is the American Wing). Only public domain paintings with an image are used. Pushing a change to `themes.json` rebuilds the feeds right away. You can also run the workflow by hand from the Actions tab.
+Edit `themes.json`. A feed can set its own `count`. A feed with broad queries should set `searchPages`, the number of result pages read at random per query beyond the first: reading every page of a query such as "painting" takes dozens of requests, and the Met turns a build away when it asks too fast. Each feed has a list of Met search queries, and `departmentId` narrows a query to one department (11 is European Paintings, 1 is the American Wing). Only public domain paintings with an image are used. Pushing a change to `themes.json` rebuilds the feeds right away. You can also run the workflow by hand from the Actions tab.
 
 ## Run it locally
 
@@ -25,3 +25,7 @@ Edit `themes.json`. A feed can set its own `count`. Each feed has a list of Met 
 pip install -r requirements.txt
 python scripts/build_art.py --out site --count 3
 ```
+
+## When the Met refuses a build
+
+Requests are spaced a quarter of a second apart, and a refusal (403 or 429) is followed by a long wait before the next try. A feed that still cannot be built keeps the set that is published now, and the workflow run carries a warning naming it. The run fails only when a feed cannot be built and has nothing published to keep, or when no feed could be built at all.

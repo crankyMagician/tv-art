@@ -42,34 +42,74 @@ FONT_PATHS = [
 ]
 
 
-def get(url, binary=False, tries=3):
+# The Met turns requests away (403) when they come too fast, so every request
+# waits its turn, and a refusal is followed by a much longer wait.
+MIN_GAP = 0.25
+REFUSED = (403, 429)
+_last_request = [0.0]
+
+
+def get(url, binary=False, tries=4):
     for attempt in range(tries):
+        wait = MIN_GAP - (time.monotonic() - _last_request[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_request[0] = time.monotonic()
         try:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=60) as r:
                 data = r.read()
             return data if binary else json.loads(data)
         except Exception as e:
-            if attempt == tries - 1 or getattr(e, "code", None) == 404:
+            code = getattr(e, "code", None)
+            if attempt == tries - 1 or code == 404:
                 raise
             print(f"retry {url}: {e}", file=sys.stderr)
-            time.sleep(2 * (attempt + 1))
+            time.sleep(15 * (attempt + 1) if code in REFUSED else 2 * (attempt + 1))
+
+
+PAGE = 200
+# The search API serves no results past this offset.
+SEARCH_WINDOW = 10000
+
+
+def search_page(query, offset):
+    params = {"q": query["q"], "hasImages": "true", "limit": PAGE, "offset": offset}
+    if query.get("tags"):
+        params["tags"] = "true"
+    if query.get("departmentId"):
+        params["departmentId"] = query["departmentId"]
+    d = get(f"{SEARCH_API}?{urllib.parse.urlencode(params)}")
+    return d.get("objectIDs") or [], d.get("total", 0)
 
 
 def search(query):
+    """Returns every object ID that matches the query."""
     ids, offset = [], 0
     while True:
-        params = {"q": query["q"], "hasImages": "true", "limit": 200, "offset": offset}
-        if query.get("tags"):
-            params["tags"] = "true"
-        if query.get("departmentId"):
-            params["departmentId"] = query["departmentId"]
-        d = get(f"{SEARCH_API}?{urllib.parse.urlencode(params)}")
-        batch = d.get("objectIDs") or []
+        batch, total = search_page(query, offset)
         ids += batch
         offset += len(batch)
-        if not batch or offset >= d.get("total", 0):
+        if not batch or offset >= total:
             return ids
+
+
+def search_sample(query, pages, rng):
+    """Returns the IDs on the first page and on a few pages picked at random.
+
+    A broad query such as "painting" matches thousands of objects. Reading
+    every page costs dozens of requests for a feed that needs a few dozen
+    paintings, and is what gets a build turned away.
+    """
+    ids, total = search_page(query, 0)
+    offsets = list(range(PAGE, min(total, SEARCH_WINDOW), PAGE))
+    rng.shuffle(offsets)
+    for offset in offsets[:pages]:
+        try:
+            ids += search_page(query, offset)[0]
+        except Exception as e:
+            print(f"skip search page {query['q']} at {offset}: {e}", file=sys.stderr)
+    return ids
 
 
 def is_usable(obj, feed):
@@ -92,8 +132,9 @@ def is_usable(obj, feed):
 
 def pick(feed, count, rng):
     ids = set()
+    pages = feed.get("searchPages")
     for query in feed["queries"]:
-        ids.update(search(query))
+        ids.update(search_sample(query, pages, rng) if pages else search(query))
     candidates = sorted(ids)
     rng.shuffle(candidates)
     chosen = []
@@ -195,6 +236,46 @@ def render(obj, frame=None):
     return canvas
 
 
+def build_feed(key, feed, count, rng, folder, base_url):
+    images = []
+    for obj in pick(feed, count, rng):
+        name = f"{len(images) + 1:02d}.jpg"
+        try:
+            render(obj, feed.get("frame")).save(folder / name, "JPEG", quality=88, optimize=True, progressive=True)
+        except Exception as e:
+            print(f"render failed {obj.get('objectID')}: {e}", file=sys.stderr)
+            continue
+        images.append({
+            "url": f"{base_url}/{key}/{name}",
+            "title": obj.get("title", ""),
+            "artist": obj.get("artistDisplayName", ""),
+            "date": obj.get("objectDate", ""),
+            "source": obj.get("objectURL", ""),
+        })
+        print(f"{key} {name}: {caption(obj)}")
+    if not images:
+        raise RuntimeError("no usable paintings found")
+    return images
+
+
+def carry_over(key, folder, base_url):
+    """Copies the feed that is published now, so a failed build keeps last week's set.
+
+    A Pages deployment replaces the whole site. Without this, one feed that
+    cannot be built would either take the other feeds down with it or vanish.
+    """
+    for old in folder.glob("*.jpg"):
+        old.unlink()
+    published = get(f"{base_url}/{key}/feed.json")
+    prefix = f"{base_url}/{key}/"
+    for image in published["images"]:
+        if not image["url"].startswith(prefix):
+            raise RuntimeError(f"unexpected image address {image['url']}")
+        name = Path(urllib.parse.urlparse(image["url"]).path).name
+        (folder / name).write_bytes(get(image["url"], binary=True))
+    return published
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--themes", default="themes.json")
@@ -209,34 +290,28 @@ def main():
     out = Path(args.out)
     index = {"updated": updated, "feeds": []}
 
+    carried = []
     for key, feed in themes["feeds"].items():
         rng = random.Random(f"{key}-{year}-{week}")
         folder = out / key
         folder.mkdir(parents=True, exist_ok=True)
-        images = []
         # A feed may ask for its own number of paintings.
         count = args.count or feed.get("count") or themes["count"]
-        for obj in pick(feed, count, rng):
-            name = f"{len(images) + 1:02d}.jpg"
+        try:
+            images = build_feed(key, feed, count, rng, folder, args.base_url)
+            published = {"name": feed["name"], "updated": updated, "images": images}
+        except Exception as e:
+            print(f"::warning::{key} could not be built ({e}). Keeping the set that is published now.")
             try:
-                render(obj, feed.get("frame")).save(folder / name, "JPEG", quality=88, optimize=True, progressive=True)
-            except Exception as e:
-                print(f"render failed {obj.get('objectID')}: {e}", file=sys.stderr)
-                continue
-            images.append({
-                "url": f"{args.base_url}/{key}/{name}",
-                "title": obj.get("title", ""),
-                "artist": obj.get("artistDisplayName", ""),
-                "date": obj.get("objectDate", ""),
-                "source": obj.get("objectURL", ""),
-            })
-            print(f"{key} {name}: {caption(obj)}")
-        if not images:
-            sys.exit(f"no images for {key}")
-        feed_url = f"{args.base_url}/{key}/feed.json"
-        (folder / "feed.json").write_text(json.dumps({"name": feed["name"], "updated": updated, "images": images}, indent=2))
-        index["feeds"].append({"id": key, "name": feed["name"], "url": feed_url})
+                published = carry_over(key, folder, args.base_url)
+            except Exception as again:
+                sys.exit(f"{key} could not be built ({e}) and has no published set to keep ({again})")
+            carried.append(key)
+        (folder / "feed.json").write_text(json.dumps(published, indent=2))
+        index["feeds"].append({"id": key, "name": feed["name"], "url": f"{args.base_url}/{key}/feed.json"})
 
+    if len(carried) == len(themes["feeds"]):
+        sys.exit("no feed could be built, so there is nothing new to publish")
     (out / "index.json").write_text(json.dumps(index, indent=2))
 
 

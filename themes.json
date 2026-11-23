@@ -27,6 +27,16 @@
         {"q": "Seurat", "departmentId": 11}
       ],
       "artists": ["Monet", "Renoir", "Degas", "Pissarro", "Sisley", "Morisot", "Caillebotte", "Cassatt", "van Gogh", "Cézanne", "Seurat"]
+    },
+    "mirror": {
+      "name": "Mirror: a mix of paintings",
+      "count": 40,
+      "frame": {"width": 1000, "height": 1000, "captionSize": 34},
+      "queries": [
+        {"q": "painting", "departmentId": 11},
+        {"q": "painting", "departmentId": 1},
+        {"q": "painting", "departmentId": 6}
+      ]
     }
   }
 }
